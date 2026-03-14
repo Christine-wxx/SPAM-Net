@@ -21,10 +21,9 @@ class NoiseEstimator(nn.Module):
         return noise_map
 
 
-class MultiResolutionModule(nn.Module):
-
+class MultiScaleFeatureExtractor(nn.Module):
     def __init__(self, in_channels):
-        super(MultiResolutionModule, self).__init__()
+        super(MultiScaleFeatureExtractor, self).__init__()
         self.branch1 = nn.Sequential(
             nn.Conv2d(in_channels, in_channels//4, kernel_size=1),
             nn.LeakyReLU(0.2, inplace=True)
@@ -55,10 +54,9 @@ class MultiResolutionModule(nn.Module):
         return out
 
 
-class EnhancedCGA(nn.Module):
-
+class SPCAF(nn.Module):
     def __init__(self, in_channels, energy_levels=3, reduction_ratio=8):
-        super(EnhancedCGA, self).__init__()
+        super(SPCAF, self).__init__()
         self.energy_levels = energy_levels
         self.channels_per_energy = in_channels // energy_levels
 
@@ -85,7 +83,7 @@ class EnhancedCGA(nn.Module):
 
         self.noise_estimator = NoiseEstimator(in_channels)
 
-        self.multi_res = MultiResolutionModule(in_channels)
+        self.multi_res = MultiScaleFeatureExtractor(in_channels)
 
         self.fusion_conv = nn.Conv2d(in_channels, in_channels, kernel_size=1)
         self.output_conv = nn.Sequential(
@@ -95,7 +93,6 @@ class EnhancedCGA(nn.Module):
         )
 
     def spatial_attention(self, x):
-
         avg_out = torch.mean(x, dim=1, keepdim=True)
         max_out, _ = torch.max(x, dim=1, keepdim=True)
         attention_input = torch.cat([avg_out, max_out], dim=1)
@@ -120,7 +117,6 @@ class EnhancedCGA(nn.Module):
     
     def cross_energy_correlation(self, x):
         b, c, h, w = x.size()
-
         x_reshaped = x.view(b, self.energy_levels, -1, h, w)
 
         energy_corr = torch.mean(x_reshaped, dim=2)  
@@ -139,33 +135,23 @@ class EnhancedCGA(nn.Module):
         initial_feat = main_feat + prior_feat
 
         spatial_attn = self.spatial_attention(initial_feat)
-
         channel_attn = self.energy_specific_channel_attention(initial_feat)
-
         initial_attn = spatial_attn.expand_as(initial_feat) + channel_attn
-
         cross_energy_feat = self.cross_energy_correlation(initial_feat)
         
-
         multi_res_feat = self.multi_res(initial_feat)
-        
-
         noise_map = self.noise_estimator(initial_feat)
         
-
         pixel_input = torch.cat([initial_feat, initial_attn, cross_energy_feat], dim=1)
         pixel_attn = torch.sigmoid(self.pixel_attention(pixel_input))
         
-
         adaptive_weights = 1.0 - noise_map 
         main_contribution = pixel_attn * main_feat
         prior_contribution = (1.0 - pixel_attn) * prior_feat
         
-
         fused_feat = initial_feat + (main_contribution * adaptive_weights) + \
                     (prior_contribution * (1.0 - adaptive_weights))
                     
-
         fused_feat = fused_feat + multi_res_feat
 
         output = self.fusion_conv(fused_feat)
@@ -174,12 +160,14 @@ class EnhancedCGA(nn.Module):
         return output
 
 
-class ECGABlock(nn.Module):
+class SPCAFM(nn.Module):
     def __init__(self, dim, energy_levels=3):
-        super(ECGABlock, self).__init__()
+        super(SPCAFM, self).__init__()
         self.norm1_main = nn.LayerNorm(dim)
         self.norm1_prior = nn.LayerNorm(dim)
-        self.ecga = EnhancedCGA(dim, energy_levels)
+        
+        self.spcaf = SPCAF(dim, energy_levels)
+        
         self.norm2 = nn.LayerNorm(dim)
         self.mlp = nn.Sequential(
             nn.Linear(dim, 4 * dim),
@@ -188,16 +176,13 @@ class ECGABlock(nn.Module):
         )
         
     def forward(self, main_feat, prior_feat):
-
         main_norm = self.norm1_main(main_feat.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
         prior_norm = self.norm1_prior(prior_feat.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
         
-
-        attn_out = self.ecga(main_norm, prior_norm)
+        attn_out = self.spcaf(main_norm, prior_norm)
 
         x = main_feat + attn_out
         
-
         x_norm = self.norm2(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
         x_shape = x_norm.shape
         x_flat = x_norm.flatten(2).transpose(1, 2)
