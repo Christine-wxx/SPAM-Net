@@ -8,7 +8,7 @@ from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, selective_
 from einops import rearrange, repeat
 
 
-from .cga_fusion import ECGABlock as SPCAFM
+from .fusion import SPCAFM
 
 # ----------------- Utility Modules -----------------
 
@@ -91,7 +91,6 @@ class Selective_Scan(nn.Module):
         self.A_logs = self.A_log_init(self.d_state, self.d_inner, copies=1, merge=True)
         self.Ds = self.D_init(self.d_inner, copies=1, merge=True)
         
-        # 使用官方 mamba_ssm 提供的 kernel
         self.selective_scan = selective_scan_fn
 
     @staticmethod
@@ -451,7 +450,7 @@ class SPAM_Net(nn.Module):
             self.conv_hr = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
             self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
         else:
-            # for image denoising
+
             self.conv_last = nn.Conv2d(embed_dim, num_out_ch, 3, 1, 1)
 
         self.apply(self._init_weights)
